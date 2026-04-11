@@ -78,8 +78,10 @@ bob_session = SessionFactory.responder(
     suite=AeadSuite.AES_GCM_SIV,
 )
 
+```
+
 See tests for end-to-end usage.
 
-Status
+**Status**
 
-This is a serious cleaned-up proof of concept. It is intentionally smaller than the two source repos because unsupported claims and unsafe pieces were removed rather than preserved.
+This is a serious cleaned-up proof of concept...
