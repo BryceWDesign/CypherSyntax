@@ -3,8 +3,7 @@ from __future__ import annotations
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-
-_MAX_SEQUENCE = (1 << 64) - 1
+from .protocol import validate_message_sequence
 
 
 def hkdf_expand(secret: bytes, *, length: int, salt: bytes | None, info: bytes) -> bytes:
@@ -62,8 +61,7 @@ def derive_message_key(
     sender_public_key: bytes,
     recipient_public_key: bytes,
 ) -> tuple[bytes, bytes]:
-    if not 0 <= sequence <= _MAX_SEQUENCE:
-        raise ValueError("message sequence must fit in an unsigned 64-bit integer")
+    validate_message_sequence(sequence)
 
     directional_secret = derive_directional_secret(
         root_key,
