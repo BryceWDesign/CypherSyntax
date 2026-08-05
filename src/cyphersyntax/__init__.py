@@ -1,5 +1,7 @@
 """Authenticated secure-messaging primitives for CypherSyntax."""
 
+from __future__ import annotations
+
 from .errors import (
     CypherSyntaxError,
     EnvelopeError,
