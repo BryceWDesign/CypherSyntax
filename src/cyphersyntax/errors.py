@@ -1,3 +1,8 @@
+"""Exception hierarchy for CypherSyntax."""
+
+from __future__ import annotations
+
+
 class CypherSyntaxError(Exception):
     """Base error for the package."""
 
