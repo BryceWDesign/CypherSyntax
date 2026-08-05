@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hmac
+from hashlib import sha256
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -28,6 +31,25 @@ def derive_session_root(
         salt=transcript_hash,
         info=b"CypherSyntax/session-root/v1",
     )
+
+
+def derive_key_confirmation(
+    root_key: bytes,
+    transcript_hash: bytes,
+    *,
+    role: str,
+) -> bytes:
+    if role not in {"initiator", "responder"}:
+        raise ValueError("key confirmation role must be initiator or responder")
+    payload = b"".join(
+        (
+            b"CypherSyntax/key-confirmation/v1|",
+            role.encode("ascii"),
+            b"|",
+            transcript_hash,
+        )
+    )
+    return hmac.new(root_key, payload, sha256).digest()
 
 
 def _length_prefixed(value: bytes) -> bytes:
