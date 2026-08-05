@@ -46,7 +46,7 @@ class SessionState:
     send_sequence: int = 0
     replay_window: ReplayWindow = field(default_factory=ReplayWindow)
 
-    def _build_aead(self, key: bytes):
+    def _build_aead(self, key: bytes) -> AESGCMSIV | ChaCha20Poly1305:
         if self.suite == AeadSuite.AES_GCM_SIV:
             return AESGCMSIV(key)
         if self.suite == AeadSuite.CHACHA20_POLY1305:
