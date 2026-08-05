@@ -14,7 +14,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+  "coverage[toml]>=7.6,<8",
+  "pytest>=8.0,<10",
+  "pytest-cov>=6.0,<8",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -24,4 +28,22 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-addopts = "-q"
+testpaths = ["tests"]
+addopts = [
+  "-q",
+  "--strict-config",
+  "--strict-markers",
+  "--cov=cyphersyntax",
+  "--cov-branch",
+  "--cov-report=term-missing",
+  "--cov-fail-under=80",
+]
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+source = ["cyphersyntax"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
