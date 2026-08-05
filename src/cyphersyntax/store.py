@@ -60,7 +60,7 @@ def _encode_object(obj: Mapping[str, Any]) -> bytes:
 
 
 class EncryptedStore:
-    def __init__(self, path: str | Path, passphrase: bytes):
+    def __init__(self, path: str | Path, passphrase: bytes) -> None:
         validate_passphrase(passphrase)
         self.path = Path(path)
         self._passphrase = passphrase
