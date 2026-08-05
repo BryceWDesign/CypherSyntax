@@ -20,7 +20,12 @@ from .handshake import (
 )
 from .identity import Identity
 from .kdf import derive_key_confirmation, derive_message_key, derive_session_root
-from .protocol import MAX_MESSAGE_SEQUENCE, PROTOCOL_VERSION, validate_message_sequence
+from .protocol import (
+    MAX_MESSAGE_SEQUENCE,
+    MAX_PLAINTEXT_BYTES,
+    PROTOCOL_VERSION,
+    validate_message_sequence,
+)
 from .replay import ReplayWindow
 from .wire import MessageEnvelope
 
@@ -49,6 +54,10 @@ class SessionState:
         raise ValueError(f"unsupported suite: {self.suite}")
 
     def encrypt(self, plaintext: bytes) -> bytes:
+        if type(plaintext) is not bytes:
+            raise TypeError("plaintext must be bytes")
+        if len(plaintext) > MAX_PLAINTEXT_BYTES:
+            raise ValueError("plaintext exceeds the maximum message size")
         if self.send_sequence > MAX_MESSAGE_SEQUENCE:
             raise OverflowError("message sequence exhausted")
         validate_message_sequence(self.send_sequence)
