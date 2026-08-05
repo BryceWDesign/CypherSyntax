@@ -1,3 +1,8 @@
+from cyphersyntax.handshake import (
+    HandshakeConfirmation,
+    HandshakeOffer,
+    HandshakeResponse,
+)
 from cyphersyntax.identity import Identity
 from cyphersyntax.session import AeadSuite, SessionFactory
 
@@ -13,14 +18,19 @@ def main() -> None:
         suite=AeadSuite.AES_GCM_SIV,
         supplemental_secret=b"future-pq-kem-secret",
     )
+    received_offer = HandshakeOffer.from_bytes(pending_alice.offer.to_bytes())
     response, pending_bob = SessionFactory.responder(
         local_identity=bob,
         remote_signing_public_key=alice.ed25519_public_bytes(),
-        offer=pending_alice.offer,
+        offer=received_offer,
         supplemental_secret=b"future-pq-kem-secret",
     )
-    confirmation, alice_session = pending_alice.complete(response)
-    bob_session = pending_bob.complete(confirmation)
+    received_response = HandshakeResponse.from_bytes(response.to_bytes())
+    confirmation, alice_session = pending_alice.complete(received_response)
+    received_confirmation = HandshakeConfirmation.from_bytes(
+        confirmation.to_bytes()
+    )
+    bob_session = pending_bob.complete(received_confirmation)
 
     packet = alice_session.encrypt(b"CypherSyntax demo message")
     plaintext = bob_session.decrypt(packet)
