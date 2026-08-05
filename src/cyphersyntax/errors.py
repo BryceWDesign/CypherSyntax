@@ -16,3 +16,15 @@ class ReplayDetectedError(CypherSyntaxError):
 
 class EnvelopeError(CypherSyntaxError):
     """Raised when an envelope cannot be parsed or validated."""
+
+
+class PersistenceError(CypherSyntaxError):
+    """Base error for durable local persistence failures."""
+
+
+class StoreError(PersistenceError):
+    """Raised when an encrypted store cannot be saved or loaded safely."""
+
+
+class IdentityError(PersistenceError):
+    """Raised when persisted identity material is invalid or inaccessible."""
