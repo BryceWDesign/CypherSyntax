@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 
 from .identity import Identity
 from .kdf import derive_message_key, derive_session_root
+from .protocol import MAX_MESSAGE_SEQUENCE, PROTOCOL_VERSION, validate_message_sequence
 from .replay import ReplayWindow
 from .wire import MessageEnvelope
 
@@ -39,10 +40,12 @@ class SessionState:
         raise ValueError(f"unsupported suite: {self.suite}")
 
     def encrypt(self, plaintext: bytes) -> bytes:
+        if self.send_sequence > MAX_MESSAGE_SEQUENCE:
+            raise OverflowError("message sequence exhausted")
+        validate_message_sequence(self.send_sequence)
         sequence = self.send_sequence
-        self.send_sequence += 1
         envelope = MessageEnvelope(
-            version=1,
+            version=PROTOCOL_VERSION,
             suite=self.suite.value,
             sender=self.local_name,
             recipient=self.remote_name,
@@ -56,13 +59,18 @@ class SessionState:
             sender_public_key=self.local_ephemeral_public_bytes,
             recipient_public_key=self.remote_ephemeral_public_bytes,
         )
-        ciphertext = self._build_aead(key).encrypt(nonce, plaintext, envelope.associated_data())
+        ciphertext = self._build_aead(key).encrypt(
+            nonce,
+            plaintext,
+            envelope.associated_data(),
+        )
         envelope.ciphertext = ciphertext
+        self.send_sequence += 1
         return envelope.to_bytes()
 
     def decrypt(self, blob: bytes) -> bytes:
         envelope = MessageEnvelope.from_bytes(blob)
-        if envelope.version != 1:
+        if envelope.version != PROTOCOL_VERSION:
             raise ValueError(f"unsupported envelope version: {envelope.version}")
         if envelope.suite != self.suite.value:
             raise ValueError("AEAD suite mismatch")
@@ -70,15 +78,25 @@ class SessionState:
             raise ValueError("message recipient mismatch")
         if envelope.sender != self.remote_name:
             raise ValueError("message sender mismatch")
-        self.replay_window.observe(envelope.sequence)
-        key, nonce = derive_message_key(
-            self.root_key,
+
+        def authenticate() -> bytes:
+            key, nonce = derive_message_key(
+                self.root_key,
+                envelope.sequence,
+                self.suite.value,
+                sender_public_key=self.remote_ephemeral_public_bytes,
+                recipient_public_key=self.local_ephemeral_public_bytes,
+            )
+            return self._build_aead(key).decrypt(
+                nonce,
+                envelope.ciphertext,
+                envelope.associated_data(),
+            )
+
+        return self.replay_window.authenticate_and_record(
             envelope.sequence,
-            self.suite.value,
-            sender_public_key=self.remote_ephemeral_public_bytes,
-            recipient_public_key=self.local_ephemeral_public_bytes,
+            authenticate,
         )
-        return self._build_aead(key).decrypt(nonce, envelope.ciphertext, envelope.associated_data())
 
 
 class SessionFactory:
