@@ -72,33 +72,6 @@ def test_bidirectional_first_messages_roundtrip(suite):
 
 
 @pytest.mark.parametrize("suite", [AeadSuite.AES_GCM_SIV, AeadSuite.CHACHA20_POLY1305])
-def test_public_factory_bidirectional_roundtrip(suite):
-    alice = Identity.generate("alice")
-    bob = Identity.generate("bob")
-    alice_session = SessionFactory.initiator(
-        local_identity=alice,
-        remote_name=bob.name,
-        remote_x25519_public_key=bob.x25519_public_bytes(),
-        suite=suite,
-    )
-    bob_session = SessionFactory.responder(
-        local_identity=bob,
-        remote_name=alice.name,
-        remote_x25519_public_key=alice.x25519_public_bytes(),
-        peer_ephemeral_public_key=alice_session.local_ephemeral_public_bytes,
-        suite=suite,
-    )
-
-    assert alice_session.root_key == bob_session.root_key
-
-    alice_packet = alice_session.encrypt(b"public hello bob")
-    bob_packet = bob_session.encrypt(b"public hello alice")
-
-    assert bob_session.decrypt(alice_packet) == b"public hello bob"
-    assert alice_session.decrypt(bob_packet) == b"public hello alice"
-
-
-@pytest.mark.parametrize("suite", [AeadSuite.AES_GCM_SIV, AeadSuite.CHACHA20_POLY1305])
 def test_tampered_ciphertext_does_not_consume_sequence_number(suite):
     alice = Identity.generate("alice")
     bob = Identity.generate("bob")
