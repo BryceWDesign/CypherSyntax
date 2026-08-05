@@ -120,6 +120,7 @@ def _build_and_validate_wheel() -> None:
                 "from pathlib import Path",
                 "import os",
                 "import cyphersyntax",
+                "from cyphersyntax.handshake import HandshakeConfirmation, HandshakeOffer, HandshakeResponse",
                 "from cyphersyntax.identity import Identity",
                 "from cyphersyntax.session import AeadSuite, SessionFactory",
                 "install_root = Path(os.environ['CYPHERSYNTAX_INSTALL_ROOT']).resolve()",
@@ -134,13 +135,16 @@ def _build_and_validate_wheel() -> None:
                 "    remote_signing_public_key=bob.ed25519_public_bytes(),",
                 "    suite=AeadSuite.AES_GCM_SIV,",
                 ")",
+                "received_offer = HandshakeOffer.from_bytes(pending_alice.offer.to_bytes())",
                 "response, pending_bob = SessionFactory.responder(",
                 "    local_identity=bob,",
                 "    remote_signing_public_key=alice.ed25519_public_bytes(),",
-                "    offer=pending_alice.offer,",
+                "    offer=received_offer,",
                 ")",
-                "confirmation, alice_session = pending_alice.complete(response)",
-                "bob_session = pending_bob.complete(confirmation)",
+                "received_response = HandshakeResponse.from_bytes(response.to_bytes())",
+                "confirmation, alice_session = pending_alice.complete(received_response)",
+                "received_confirmation = HandshakeConfirmation.from_bytes(confirmation.to_bytes())",
+                "bob_session = pending_bob.complete(received_confirmation)",
                 "packet = alice_session.encrypt(b'installed-wheel-smoke-test')",
                 "if bob_session.decrypt(packet) != b'installed-wheel-smoke-test':",
                 "    raise RuntimeError('installed wheel failed encryption round trip')",
@@ -181,6 +185,18 @@ def main() -> int:
             ],
         )
         _run("Run strict test and coverage gate", [sys.executable, "-m", "pytest"])
+        source_environment = os.environ.copy()
+        existing_pythonpath = source_environment.get("PYTHONPATH")
+        source_environment["PYTHONPATH"] = os.pathsep.join(
+            part
+            for part in (str(REPOSITORY_ROOT / "src"), existing_pythonpath)
+            if part
+        )
+        _run(
+            "Run source-tree demo",
+            [sys.executable, "demo.py"],
+            env=source_environment,
+        )
         _build_and_validate_wheel()
     except GreenCheckError as exc:
         print(f"\nGREEN CHECK FAILED: {exc}", file=sys.stderr, flush=True)
