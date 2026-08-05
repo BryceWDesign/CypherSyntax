@@ -1,16 +1,24 @@
 from cyphersyntax.identity import Identity
-from cyphersyntax.session import SessionFactory, AeadSuite
+from cyphersyntax.session import AeadSuite, SessionFactory
 
 
 def main() -> None:
     alice = Identity.generate("alice")
     bob = Identity.generate("bob")
-    alice_session, bob_session = SessionFactory.pair_for_tests(
-        alice=alice,
-        bob=bob,
+
+    pending_alice = SessionFactory.initiator(
+        local_identity=alice,
+        remote_name=bob.name,
         suite=AeadSuite.AES_GCM_SIV,
         supplemental_secret=b"future-pq-kem-secret",
     )
+    response, bob_session = SessionFactory.responder(
+        local_identity=bob,
+        offer=pending_alice.offer,
+        supplemental_secret=b"future-pq-kem-secret",
+    )
+    alice_session = pending_alice.complete(response)
+
     packet = alice_session.encrypt(b"CypherSyntax demo message")
     plaintext = bob_session.decrypt(packet)
     print(plaintext.decode("utf-8"))
