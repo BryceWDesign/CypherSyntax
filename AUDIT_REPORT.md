@@ -1,30 +1,92 @@
-# Audit Report: BlackVault + IX-GhostProtocol -> CypherSyntax
+# CypherSyntax Audit and Remediation Report
 
-## High-confidence failures found in the source repos
+## Scope
 
-### 1) Packaging and import model was broken
-- BlackVault tests import `core.*` and `network.*`, but the repository uses a `src/` layout without packaging metadata or import path configuration.
-- IX-GhostProtocol tests import `ix_ghostprotocol.*`, but no such package exists in the repository.
+CypherSyntax began as a cleanup of two incomplete secure-messaging repositories. The
+review focused on whether the surviving code, tests, packaging, and public claims could
+support a small defensible cryptographic core.
 
-### 2) Tests and implementation did not match
-- BlackVault tests reference `create_session_key()` and `remove_session_key()` methods that do not exist in the session manager.
-- IX-GhostProtocol tests reference `generate_keypair()`, `encrypt_message()`, `NetworkNode`, and `Peer`, none of which exist in the implementation.
+This report describes engineering remediation, not an independent cryptographic audit
+or a certification.
 
-### 3) Dangerous or incomplete cryptographic design choices
-- Mocked “Kyber” code returned hard-coded bytes and therefore could not provide any post-quantum security.
-- Shared secrets were truncated directly instead of always being processed through a disciplined KDF.
-- Some code paths rotated symmetric keys locally without a protocol for synchronizing the peer, which would break decryption.
-- The padding strategy in one engine appended zero bytes and stripped them with `rstrip(b"\x00")`, which can destroy legitimate plaintext suffix bytes.
-- Nonce management and protocol state were underspecified.
+## Material failures found in the source repositories
 
-### 4) Claims exceeded the code
-- README claims around stable core protocol, metadata resistance, and advanced transports were not matched by the repository state.
-- “Self-defending encryption” was described conceptually but not implemented as a credible protocol feature.
+### Broken packaging and imports
 
-## What CypherSyntax does instead
-- chooses a small set of modern primitives
-- makes the key schedule explicit
-- removes fake PQ claims while leaving a safe extension point
-- introduces replay tracking and versioned envelopes
-- fixes packaging and testability
-- narrows scope to a defensible cryptographic core
+The source repositories used package layouts that did not match their tests. Tests
+imported packages and APIs that were absent or unreachable under the checked-in
+configuration.
+
+### Tests and implementation did not agree
+
+Tests referenced session, key-management, networking, and encryption functions that did
+not exist. Passing the available test files therefore could not establish a working
+package.
+
+### Unsafe or incomplete cryptographic behavior
+
+The review found mocked post-quantum operations, direct secret truncation instead of a
+disciplined KDF, underspecified nonce and replay state, unsynchronized key rotation, and
+padding behavior capable of altering legitimate plaintext.
+
+### Claims exceeded implementation
+
+The original documentation described mature protocol, metadata-resistance, transport,
+and self-defending behavior that the code did not implement.
+
+## Remediation completed in CypherSyntax
+
+CypherSyntax now provides:
+
+- installable `src`-layout packaging with an explicit public API and PEP 561 marker;
+- authenticated two-sided ephemeral X25519 handshakes;
+- Ed25519 signatures bound to the complete handshake identities and ephemeral keys;
+- explicit initiator and responder key confirmation;
+- separate directional traffic secrets and per-message keys and nonces;
+- synchronized send-sequence allocation to prevent concurrent nonce reuse;
+- replay state committed only after successful AEAD authentication;
+- canonical, bounded, duplicate-resistant handshake and message encodings;
+- AES-GCM-SIV and ChaCha20-Poly1305 message protection;
+- encrypted, authenticated, atomically replaced identity and local-store persistence;
+- bounded passphrases, payloads, names, counters, and serialized inputs;
+- branch-aware tests, source assurance, demo execution, wheel validation, isolated wheel
+  installation, and installed-package smoke testing;
+- a GitHub Actions matrix that runs the same repository gate used locally.
+
+## Green-gate definition
+
+The repository is green only when `python check_green.py` exits successfully. The gate
+performs all of the following:
+
+1. Python compilation.
+2. Repository-native source assurance.
+3. The complete test suite with branch coverage at or above 90 percent.
+4. Source-tree demo execution.
+5. Wheel construction.
+6. Wheel path, metadata, contents, and `RECORD` integrity validation.
+7. Isolated installation of the built wheel.
+8. An authenticated handshake and encrypted round trip using only the installed wheel.
+
+A missing, skipped, or failed stage is not green.
+
+## Residual limitations
+
+The current release is a security-focused proof of concept, not a finished messenger.
+It has not received an independent protocol or implementation audit. It does not provide
+a double ratchet, post-compromise security, metadata protection, traffic-analysis
+resistance, anonymous transport, group messaging, secure hardware integration, or a
+secure-memory-erasure guarantee.
+
+Peer Ed25519 public keys are trust anchors and must be obtained through an authenticated
+out-of-band process. A maliciously substituted trust anchor authenticates the attacker.
+
+Session root keys remain available to the live `SessionState`. Compromise of a live
+session exposes that session, and there is no per-message ratchet to recover security
+after compromise.
+
+## Conclusion
+
+CypherSyntax is now internally coherent, packaged, testable, and protected by a
+reproducible green gate. That is a meaningful improvement over the audited source
+repositories, but it must not be represented as independently audited or production
+certified.
