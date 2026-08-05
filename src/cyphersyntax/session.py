@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from hashlib import sha256
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV, ChaCha20Poly1305
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -9,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PublicKey,
 )
 
+from .handshake import HandshakeOffer, HandshakeResponse, handshake_transcript
 from .identity import Identity
 from .kdf import derive_message_key, derive_session_root
 from .protocol import MAX_MESSAGE_SEQUENCE, PROTOCOL_VERSION, validate_message_sequence
@@ -99,59 +101,76 @@ class SessionState:
         )
 
 
-class SessionFactory:
-    @staticmethod
-    def _canonical_transcript(public_a: bytes, public_b: bytes) -> bytes:
-        first, second = sorted((public_a, public_b))
-        return b"CypherSyntax/transcript/v1|" + first + b"|" + second
+@dataclass(slots=True)
+class InitiatorHandshake:
+    local_identity: Identity = field(repr=False)
+    offer: HandshakeOffer
+    supplemental_secret: bytes = field(default=b"", repr=False)
+    _ephemeral_private_key: X25519PrivateKey | None = field(
+        default=None,
+        repr=False,
+    )
 
-    @staticmethod
-    def _make_root(
-        *,
-        local_private_key: X25519PrivateKey,
-        remote_public_key_bytes: bytes,
-        local_ephemeral_public_bytes: bytes,
-        remote_ephemeral_public_bytes: bytes,
-        supplemental_secret: bytes = b"",
-    ) -> bytes:
-        remote_public_key = X25519PublicKey.from_public_bytes(remote_public_key_bytes)
-        shared_secret = local_private_key.exchange(remote_public_key)
-        transcript_hash = SessionFactory._canonical_transcript(
-            local_ephemeral_public_bytes,
-            remote_ephemeral_public_bytes,
+    @property
+    def completed(self) -> bool:
+        return self._ephemeral_private_key is None
+
+    def complete(self, response: HandshakeResponse) -> SessionState:
+        private_key = self._ephemeral_private_key
+        if private_key is None:
+            raise RuntimeError("initiator handshake has already been completed")
+
+        response.validate_for_offer(self.offer)
+        suite = AeadSuite(response.suite)
+        remote_public_key = X25519PublicKey.from_public_bytes(
+            response.responder_ephemeral_public_key
         )
-        return derive_session_root(
+        shared_secret = private_key.exchange(remote_public_key)
+        transcript_hash = sha256(
+            handshake_transcript(self.offer, response)
+        ).digest()
+        root_key = derive_session_root(
             shared_secret=shared_secret,
             transcript_hash=transcript_hash,
-            supplemental_secret=supplemental_secret,
+            supplemental_secret=self.supplemental_secret,
         )
+        session = SessionState(
+            local_name=self.offer.initiator,
+            remote_name=self.offer.responder,
+            suite=suite,
+            root_key=root_key,
+            local_ephemeral_public_bytes=self.offer.initiator_ephemeral_public_key,
+            remote_ephemeral_public_bytes=response.responder_ephemeral_public_key,
+        )
+        self._ephemeral_private_key = None
+        return session
 
+
+class SessionFactory:
     @classmethod
     def initiator(
         cls,
         *,
         local_identity: Identity,
         remote_name: str,
-        remote_x25519_public_key: bytes,
         suite: AeadSuite = AeadSuite.AES_GCM_SIV,
         supplemental_secret: bytes = b"",
-    ) -> SessionState:
+    ) -> InitiatorHandshake:
         local_ephemeral = X25519PrivateKey.generate()
-        local_ephemeral_public_bytes = local_ephemeral.public_key().public_bytes_raw()
-        root_key = cls._make_root(
-            local_private_key=local_ephemeral,
-            remote_public_key_bytes=remote_x25519_public_key,
-            local_ephemeral_public_bytes=local_ephemeral_public_bytes,
-            remote_ephemeral_public_bytes=remote_x25519_public_key,
-            supplemental_secret=supplemental_secret,
+        offer = HandshakeOffer(
+            version=PROTOCOL_VERSION,
+            suite=suite.value,
+            initiator=local_identity.name,
+            responder=remote_name,
+            initiator_ephemeral_public_key=(
+                local_ephemeral.public_key().public_bytes_raw()
+            ),
         )
-        return SessionState(
-            local_name=local_identity.name,
-            remote_name=remote_name,
-            suite=suite,
-            root_key=root_key,
-            local_ephemeral_public_bytes=local_ephemeral_public_bytes,
-            remote_ephemeral_public_bytes=remote_x25519_public_key,
+        return InitiatorHandshake(
+            local_identity=local_identity,
+            offer=offer,
+            supplemental_secret=supplemental_secret,
+            _ephemeral_private_key=local_ephemeral,
         )
 
     @classmethod
@@ -159,27 +178,38 @@ class SessionFactory:
         cls,
         *,
         local_identity: Identity,
-        remote_name: str,
-        remote_x25519_public_key: bytes,
-        peer_ephemeral_public_key: bytes,
-        suite: AeadSuite = AeadSuite.AES_GCM_SIV,
+        offer: HandshakeOffer,
         supplemental_secret: bytes = b"",
-    ) -> SessionState:
-        root_key = cls._make_root(
-            local_private_key=local_identity.exchange_private_key,
-            remote_public_key_bytes=peer_ephemeral_public_key,
-            local_ephemeral_public_bytes=local_identity.x25519_public_bytes(),
-            remote_ephemeral_public_bytes=peer_ephemeral_public_key,
+    ) -> tuple[HandshakeResponse, SessionState]:
+        if local_identity.name != offer.responder:
+            raise ValueError("local identity does not match handshake responder")
+
+        suite = AeadSuite(offer.suite)
+        local_ephemeral = X25519PrivateKey.generate()
+        local_ephemeral_public = local_ephemeral.public_key().public_bytes_raw()
+        response = HandshakeResponse.from_offer(
+            offer,
+            responder_ephemeral_public_key=local_ephemeral_public,
+        )
+        remote_public_key = X25519PublicKey.from_public_bytes(
+            offer.initiator_ephemeral_public_key
+        )
+        shared_secret = local_ephemeral.exchange(remote_public_key)
+        transcript_hash = sha256(handshake_transcript(offer, response)).digest()
+        root_key = derive_session_root(
+            shared_secret=shared_secret,
+            transcript_hash=transcript_hash,
             supplemental_secret=supplemental_secret,
         )
-        return SessionState(
-            local_name=local_identity.name,
-            remote_name=remote_name,
+        session = SessionState(
+            local_name=offer.responder,
+            remote_name=offer.initiator,
             suite=suite,
             root_key=root_key,
-            local_ephemeral_public_bytes=local_identity.x25519_public_bytes(),
-            remote_ephemeral_public_bytes=peer_ephemeral_public_key,
+            local_ephemeral_public_bytes=local_ephemeral_public,
+            remote_ephemeral_public_bytes=offer.initiator_ephemeral_public_key,
         )
+        return response, session
 
     @classmethod
     def pair_for_tests(
@@ -190,39 +220,16 @@ class SessionFactory:
         suite: AeadSuite = AeadSuite.AES_GCM_SIV,
         supplemental_secret: bytes = b"",
     ) -> tuple[SessionState, SessionState]:
-        alice_ephemeral = X25519PrivateKey.generate()
-        bob_ephemeral = X25519PrivateKey.generate()
-        alice_ephemeral_public = alice_ephemeral.public_key().public_bytes_raw()
-        bob_ephemeral_public = bob_ephemeral.public_key().public_bytes_raw()
-
-        alice_root = cls._make_root(
-            local_private_key=alice_ephemeral,
-            remote_public_key_bytes=bob_ephemeral_public,
-            local_ephemeral_public_bytes=alice_ephemeral_public,
-            remote_ephemeral_public_bytes=bob_ephemeral_public,
-            supplemental_secret=supplemental_secret,
-        )
-        bob_root = cls._make_root(
-            local_private_key=bob_ephemeral,
-            remote_public_key_bytes=alice_ephemeral_public,
-            local_ephemeral_public_bytes=bob_ephemeral_public,
-            remote_ephemeral_public_bytes=alice_ephemeral_public,
-            supplemental_secret=supplemental_secret,
-        )
-        alice_state = SessionState(
-            local_name=alice.name,
+        pending_alice = cls.initiator(
+            local_identity=alice,
             remote_name=bob.name,
             suite=suite,
-            root_key=alice_root,
-            local_ephemeral_public_bytes=alice_ephemeral_public,
-            remote_ephemeral_public_bytes=bob_ephemeral_public,
+            supplemental_secret=supplemental_secret,
         )
-        bob_state = SessionState(
-            local_name=bob.name,
-            remote_name=alice.name,
-            suite=suite,
-            root_key=bob_root,
-            local_ephemeral_public_bytes=bob_ephemeral_public,
-            remote_ephemeral_public_bytes=alice_ephemeral_public,
+        response, bob_session = cls.responder(
+            local_identity=bob,
+            offer=pending_alice.offer,
+            supplemental_secret=supplemental_secret,
         )
-        return alice_state, bob_state
+        alice_session = pending_alice.complete(response)
+        return alice_session, bob_session
