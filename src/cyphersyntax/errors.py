@@ -18,6 +18,10 @@ class EnvelopeError(CypherSyntaxError):
     """Raised when an envelope cannot be parsed or validated."""
 
 
+class HandshakeError(CypherSyntaxError):
+    """Raised when a handshake message cannot be parsed or validated."""
+
+
 class PersistenceError(CypherSyntaxError):
     """Base error for durable local persistence failures."""
 
