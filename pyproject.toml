@@ -42,7 +42,7 @@ addopts = [
   "--cov=cyphersyntax",
   "--cov-branch",
   "--cov-report=term-missing",
-  "--cov-fail-under=80",
+  "--cov-fail-under=90",
 ]
 xfail_strict = true
 
@@ -51,5 +51,5 @@ branch = true
 source = ["cyphersyntax"]
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 90
 show_missing = true
