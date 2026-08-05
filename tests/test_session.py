@@ -1,7 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from cryptography.exceptions import InvalidTag
 
-from cyphersyntax.errors import ReplayDetectedError
+from cyphersyntax.errors import EnvelopeError, ReplayDetectedError
 from cyphersyntax.identity import Identity
 from cyphersyntax.kdf import derive_message_key
 from cyphersyntax.protocol import MAX_MESSAGE_SEQUENCE
@@ -156,3 +158,39 @@ def test_hybrid_ready_schedule_changes_root_key():
     )
     assert a1.root_key != a2.root_key
     assert b1.root_key != b2.root_key
+
+
+@pytest.mark.parametrize("suite", [AeadSuite.AES_GCM_SIV, AeadSuite.CHACHA20_POLY1305])
+def test_concurrent_encryptions_never_reuse_sequence_or_nonce(suite):
+    alice = Identity.generate("alice")
+    bob = Identity.generate("bob")
+    alice_session, bob_session = SessionFactory.pair_for_tests(
+        alice=alice,
+        bob=bob,
+        suite=suite,
+    )
+    plaintexts = [f"concurrent-message-{index}".encode() for index in range(128)]
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        packets = list(executor.map(alice_session.encrypt, plaintexts))
+
+    envelopes = [MessageEnvelope.from_bytes(packet) for packet in packets]
+    assert sorted(envelope.sequence for envelope in envelopes) == list(range(128))
+    assert alice_session.send_sequence == 128
+    for packet, plaintext in zip(packets, plaintexts, strict=True):
+        assert bob_session.decrypt(packet) == plaintext
+
+
+def test_failed_envelope_serialization_does_not_advance_send_sequence():
+    alice = Identity.generate("alice")
+    bob = Identity.generate("bob")
+    alice_session, _ = SessionFactory.pair_for_tests(alice=alice, bob=bob)
+    alice_session.remote_name = "bob\nadmin"
+
+    with pytest.raises(EnvelopeError, match="printable characters"):
+        alice_session.encrypt(b"must not consume sequence zero")
+
+    assert alice_session.send_sequence == 0
+    alice_session.remote_name = "bob"
+    packet = MessageEnvelope.from_bytes(alice_session.encrypt(b"sequence zero"))
+    assert packet.sequence == 0
