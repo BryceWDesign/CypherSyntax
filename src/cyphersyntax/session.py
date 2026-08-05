@@ -27,6 +27,7 @@ class SessionState:
     suite: AeadSuite
     root_key: bytes
     local_ephemeral_public_bytes: bytes
+    remote_ephemeral_public_bytes: bytes
     send_sequence: int = 0
     replay_window: ReplayWindow = field(default_factory=ReplayWindow)
 
@@ -48,7 +49,13 @@ class SessionState:
             sequence=sequence,
             ciphertext=b"",
         )
-        key, nonce = derive_message_key(self.root_key, sequence, self.suite.value)
+        key, nonce = derive_message_key(
+            self.root_key,
+            sequence,
+            self.suite.value,
+            sender_public_key=self.local_ephemeral_public_bytes,
+            recipient_public_key=self.remote_ephemeral_public_bytes,
+        )
         ciphertext = self._build_aead(key).encrypt(nonce, plaintext, envelope.associated_data())
         envelope.ciphertext = ciphertext
         return envelope.to_bytes()
@@ -64,7 +71,13 @@ class SessionState:
         if envelope.sender != self.remote_name:
             raise ValueError("message sender mismatch")
         self.replay_window.observe(envelope.sequence)
-        key, nonce = derive_message_key(self.root_key, envelope.sequence, self.suite.value)
+        key, nonce = derive_message_key(
+            self.root_key,
+            envelope.sequence,
+            self.suite.value,
+            sender_public_key=self.remote_ephemeral_public_bytes,
+            recipient_public_key=self.local_ephemeral_public_bytes,
+        )
         return self._build_aead(key).decrypt(nonce, envelope.ciphertext, envelope.associated_data())
 
 
@@ -120,6 +133,7 @@ class SessionFactory:
             suite=suite,
             root_key=root_key,
             local_ephemeral_public_bytes=local_ephemeral_public_bytes,
+            remote_ephemeral_public_bytes=remote_x25519_public_key,
         )
 
     @classmethod
@@ -146,6 +160,7 @@ class SessionFactory:
             suite=suite,
             root_key=root_key,
             local_ephemeral_public_bytes=local_identity.x25519_public_bytes(),
+            remote_ephemeral_public_bytes=peer_ephemeral_public_key,
         )
 
     @classmethod
@@ -182,6 +197,7 @@ class SessionFactory:
             suite=suite,
             root_key=alice_root,
             local_ephemeral_public_bytes=alice_ephemeral_public,
+            remote_ephemeral_public_bytes=bob_ephemeral_public,
         )
         bob_state = SessionState(
             local_name=bob.name,
@@ -189,5 +205,6 @@ class SessionFactory:
             suite=suite,
             root_key=bob_root,
             local_ephemeral_public_bytes=bob_ephemeral_public,
+            remote_ephemeral_public_bytes=alice_ephemeral_public,
         )
         return alice_state, bob_state
