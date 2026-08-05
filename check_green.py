@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import csv
 from email.parser import Parser
@@ -19,6 +20,9 @@ MINIMUM_PYTHON = (3, 10)
 PACKAGE_NAME = "CypherSyntax"
 PACKAGE_VERSION = "0.1.0"
 EXPECTED_RUNTIME_DEPENDENCY = "cryptography>=46.0.0"
+EXPECTED_README_MARKER = (
+    "CypherSyntax is a compact authenticated secure-messaging core for Python."
+)
 EXPECTED_PACKAGE_FILES = frozenset(
     {
         "cyphersyntax/__init__.py",
@@ -92,6 +96,35 @@ def _check_environment() -> None:
             f"missing development dependencies: {formatted}. "
             "Install the project with: python -m pip install -e .[dev]"
         )
+
+
+def _validate_python_310_grammar() -> None:
+    print("\n=== Validate Python 3.10 grammar compatibility ===", flush=True)
+    paths = sorted((REPOSITORY_ROOT / "src").rglob("*.py"))
+    paths.extend(sorted((REPOSITORY_ROOT / "tests").rglob("*.py")))
+    paths.extend(
+        REPOSITORY_ROOT / name
+        for name in (
+            "check_green.py",
+            "check_source_quality.py",
+            "demo.py",
+        )
+    )
+    for path in paths:
+        try:
+            source = path.read_text(encoding="utf-8", errors="strict")
+            ast.parse(
+                source,
+                filename=str(path),
+                type_comments=True,
+                feature_version=(3, 10),
+            )
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            relative = path.relative_to(REPOSITORY_ROOT).as_posix()
+            raise GreenCheckError(
+                f"Python 3.10 grammar validation failed for {relative}: {exc}"
+            ) from exc
+    print(f"Python 3.10 grammar validation passed ({len(paths)} files)", flush=True)
 
 
 def _safe_wheel_member(name: str) -> bool:
@@ -169,12 +202,25 @@ def _validate_wheel(wheel_path: Path) -> None:
             record_names = sorted(
                 name for name in name_set if name.endswith(".dist-info/RECORD")
             )
+            license_names = sorted(
+                name
+                for name in name_set
+                if name.endswith(".dist-info/licenses/LICENSE")
+            )
             if not (
-                len(metadata_names) == len(wheel_names) == len(record_names) == 1
+                len(metadata_names)
+                == len(wheel_names)
+                == len(record_names)
+                == len(license_names)
+                == 1
             ):
                 raise GreenCheckError(
-                    "wheel must contain exactly one METADATA, WHEEL, and RECORD file"
+                    "wheel must contain exactly one METADATA, WHEEL, RECORD, "
+                    "and LICENSE file"
                 )
+            repository_license = (REPOSITORY_ROOT / "LICENSE").read_bytes()
+            if archive.read(license_names[0]) != repository_license:
+                raise GreenCheckError("wheel license does not match repository LICENSE")
 
             metadata = Parser().parsestr(
                 archive.read(metadata_names[0]).decode("utf-8", errors="strict")
@@ -187,6 +233,10 @@ def _validate_wheel(wheel_path: Path) -> None:
                 raise GreenCheckError(
                     "wheel metadata contains an unexpected Python requirement"
                 )
+            if metadata["Description-Content-Type"] != "text/markdown":
+                raise GreenCheckError("wheel metadata is missing Markdown README metadata")
+            if EXPECTED_README_MARKER not in metadata.get_payload():
+                raise GreenCheckError("wheel metadata is missing the repository README")
             runtime_dependencies = metadata.get_all("Requires-Dist", failobj=[])
             direct_runtime_dependencies = [
                 dependency
@@ -388,6 +438,7 @@ def main() -> int:
                 "check_source_quality.py",
             ],
         )
+        _validate_python_310_grammar()
         _run(
             "Run repository-native static source assurance",
             [sys.executable, "check_source_quality.py"],
