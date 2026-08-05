@@ -6,6 +6,10 @@ class InvalidSignatureError(CypherSyntaxError):
     """Raised when signature verification fails."""
 
 
+class KeyConfirmationError(CypherSyntaxError):
+    """Raised when handshake key confirmation fails."""
+
+
 class ReplayDetectedError(CypherSyntaxError):
     """Raised when a message sequence number is replayed."""
 
