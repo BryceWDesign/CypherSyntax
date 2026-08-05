@@ -34,16 +34,24 @@ class Identity:
     def sign(self, data: bytes) -> bytes:
         return self.signing_private_key.sign(data)
 
-    def verify(self, data: bytes, signature: bytes, public_key: bytes | None = None) -> None:
-        key = (
-            Ed25519PublicKey.from_public_bytes(public_key)
-            if public_key is not None
-            else self.signing_private_key.public_key()
-        )
+    @staticmethod
+    def verify_signature(data: bytes, signature: bytes, public_key: bytes) -> None:
+        key = Ed25519PublicKey.from_public_bytes(public_key)
         try:
             key.verify(signature, data)
         except InvalidSignature as exc:
             raise InvalidSignatureError("signature verification failed") from exc
+
+    def verify(
+        self,
+        data: bytes,
+        signature: bytes,
+        public_key: bytes | None = None,
+    ) -> None:
+        verification_key = (
+            public_key if public_key is not None else self.ed25519_public_bytes()
+        )
+        self.verify_signature(data, signature, verification_key)
 
     def ed25519_public_bytes(self) -> bytes:
         return self.signing_private_key.public_key().public_bytes(
@@ -97,4 +105,8 @@ class Identity:
             raise TypeError("loaded signing key is not Ed25519")
         if not isinstance(exchange_key, X25519PrivateKey):
             raise TypeError("loaded exchange key is not X25519")
-        return cls(name=name, signing_private_key=signing_key, exchange_private_key=exchange_key)
+        return cls(
+            name=name,
+            signing_private_key=signing_key,
+            exchange_private_key=exchange_key,
+        )
