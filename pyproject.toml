@@ -1,49 +1,45 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+name: Green Gate
 
-[project]
-name = "CypherSyntax"
-version = "0.1.0"
-description = "Defensive hybrid-ready secure messaging core built from an audit of BlackVault and IX-GhostProtocol"
-requires-python = ">=3.10"
-license = {text = "AGPL-3.0-only"}
-authors = [{name = "Bryce Lovell"}]
-dependencies = [
-  "cryptography>=46.0.0",
-]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
-[project.optional-dependencies]
-dev = [
-  "coverage[toml]>=7.6,<8",
-  "pytest>=8.0,<10",
-  "pytest-cov>=6.0,<8",
-]
+permissions:
+  contents: read
 
-[tool.setuptools]
-package-dir = {"" = "src"}
+concurrency:
+  group: green-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-[tool.setuptools.packages.find]
-where = ["src"]
+jobs:
+  green-gate:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
 
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
-addopts = [
-  "-q",
-  "--strict-config",
-  "--strict-markers",
-  "--cov=cyphersyntax",
-  "--cov-branch",
-  "--cov-report=term-missing",
-  "--cov-fail-under=80",
-]
-xfail_strict = true
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
-[tool.coverage.run]
-branch = true
-source = ["cyphersyntax"]
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
 
-[tool.coverage.report]
-fail_under = 80
-show_missing = true
+      - name: Install project and development dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Run complete green gate
+        run: python check_green.py
