@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 import hmac
 from hashlib import sha256
+from threading import Lock
+from types import TracebackType
+from typing import Protocol
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV, ChaCha20Poly1305
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -30,6 +33,17 @@ from .replay import ReplayWindow
 from .wire import MessageEnvelope
 
 
+class _ContextLock(Protocol):
+    def __enter__(self) -> object: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
+
+
 class AeadSuite(str, Enum):
     AES_GCM_SIV = "AES_GCM_SIV"
     CHACHA20_POLY1305 = "CHACHA20_POLY1305"
@@ -45,6 +59,12 @@ class SessionState:
     remote_ephemeral_public_bytes: bytes
     send_sequence: int = 0
     replay_window: ReplayWindow = field(default_factory=ReplayWindow)
+    _send_lock: _ContextLock = field(
+        default_factory=Lock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def _build_aead(self, key: bytes) -> AESGCMSIV | ChaCha20Poly1305:
         if self.suite == AeadSuite.AES_GCM_SIV:
@@ -58,33 +78,36 @@ class SessionState:
             raise TypeError("plaintext must be bytes")
         if len(plaintext) > MAX_PLAINTEXT_BYTES:
             raise ValueError("plaintext exceeds the maximum message size")
-        if self.send_sequence > MAX_MESSAGE_SEQUENCE:
-            raise OverflowError("message sequence exhausted")
-        validate_message_sequence(self.send_sequence)
-        sequence = self.send_sequence
-        envelope = MessageEnvelope(
-            version=PROTOCOL_VERSION,
-            suite=self.suite.value,
-            sender=self.local_name,
-            recipient=self.remote_name,
-            sequence=sequence,
-            ciphertext=b"",
-        )
-        key, nonce = derive_message_key(
-            self.root_key,
-            sequence,
-            self.suite.value,
-            sender_public_key=self.local_ephemeral_public_bytes,
-            recipient_public_key=self.remote_ephemeral_public_bytes,
-        )
-        ciphertext = self._build_aead(key).encrypt(
-            nonce,
-            plaintext,
-            envelope.associated_data(),
-        )
-        envelope.ciphertext = ciphertext
-        self.send_sequence += 1
-        return envelope.to_bytes()
+
+        with self._send_lock:
+            if self.send_sequence > MAX_MESSAGE_SEQUENCE:
+                raise OverflowError("message sequence exhausted")
+            validate_message_sequence(self.send_sequence)
+            sequence = self.send_sequence
+            envelope = MessageEnvelope(
+                version=PROTOCOL_VERSION,
+                suite=self.suite.value,
+                sender=self.local_name,
+                recipient=self.remote_name,
+                sequence=sequence,
+                ciphertext=b"",
+            )
+            key, nonce = derive_message_key(
+                self.root_key,
+                sequence,
+                self.suite.value,
+                sender_public_key=self.local_ephemeral_public_bytes,
+                recipient_public_key=self.remote_ephemeral_public_bytes,
+            )
+            ciphertext = self._build_aead(key).encrypt(
+                nonce,
+                plaintext,
+                envelope.associated_data(),
+            )
+            envelope.ciphertext = ciphertext
+            packet = envelope.to_bytes()
+            self.send_sequence += 1
+            return packet
 
     def decrypt(self, blob: bytes) -> bytes:
         envelope = MessageEnvelope.from_bytes(blob)
